@@ -77,7 +77,8 @@ class DataBlobClient:
         writer.writeheader()
         writer.writerows(rows)
         f.seek(0)
-        return f.read()
+        # read and make sure we don't have a BOM
+        return f.read().lstrip("\ufeff")
 
     def update_dataset(self, name, version, data, column_names=None):
         columns = column_names if column_names else self._get_unique_keys(data)
