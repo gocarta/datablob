@@ -4,6 +4,21 @@ import io
 import json
 
 
+POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat"]
+
+POSSIBLE_LONGITUDE_KEYS = [
+    "LONGITUDE",
+    "Longitude",
+    "longitude",
+    "LONG",
+    "Long",
+    "long",
+    "LON",
+    "Lon",
+    "lon",
+]
+
+
 class DataBlobClient:
     def __init__(self, bucket_name, bucket_path):
         self.bucket_name = bucket_name
@@ -38,6 +53,21 @@ class DataBlobClient:
         response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
         object_content = response["Body"].read().decode("utf-8")
         return json.loads(object_content)
+
+    def upload_geojson_points(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.points.geojson"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=data if isinstance(data, str) else json.dumps(data),
+        )
 
     def upload_json(self, dataset_name, dataset_version, data):
         key = (
@@ -80,10 +110,60 @@ class DataBlobClient:
         # read and make sure we don't have a BOM
         return f.read().lstrip("\ufeff")
 
-    def update_dataset(self, name, version, data, column_names=None):
+    def infer_latitude(self, rows):
+        keys = POSSIBLE_LATITUDE_KEYS
+        for row in rows:
+            keys = [key for key in keys if key in row]
+        return keys[0] if len(keys) > 1 else None
+
+    def infer_longitude(self, rows):
+        keys = POSSIBLE_LONGITUDE_KEYS
+        for row in rows:
+            keys = [key for key in keys if key in row]
+        return keys[0] if len(keys) > 1 else None
+
+    def convert_rows_to_geojson_points(self, rows, longitude_key, latitude_key):
+        features = []
+        for row in rows:
+            features.append(
+                {
+                    "type": "Feature",
+                    "properties": row,
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [row[longitude_key], row[latitude_key]],
+                    },
+                }
+            )
+        return {"type": "FeatureCollection", "features": features}
+
+    def update_dataset(
+        self,
+        name,
+        version,
+        data,
+        column_names=None,
+        latitude_key=None,
+        longitude_key=None,
+    ):
         columns = column_names if column_names else self._get_unique_keys(data)
-        meta = {"name": name, "numColumns": len(columns), "numRows": len(data)}
+        meta = {
+            "name": name,
+            "numColumns": len(columns),
+            "numRows": len(data),
+            "columns": columns,
+        }
         data_as_csv = self.convert_rows_to_csv(data, fieldnames=columns)
+
+        if latitude_key and longitude_key:
+            data_as_geojson_points = self.convert_rows_to_geojson_points(
+                data, longitude_key=longitude_key, latitude_key=latitude_key
+            )
+        else:
+            data_as_geojson_points = None
+
         self.upload_csv(name, version, data_as_csv)
         self.upload_json(name, version, data)
+        if data_as_geojson_points:
+            self.upload_geojson_points(name, version, data_as_geojson_points)
         self.upload_metadata(name, version, meta)
