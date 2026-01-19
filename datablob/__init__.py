@@ -1,7 +1,10 @@
 import boto3
 import csv
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import io
 import json
+import tzdata
 
 
 POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat"]
@@ -20,15 +23,46 @@ POSSIBLE_LONGITUDE_KEYS = [
 
 
 class DataBlobClient:
-    def __init__(self, bucket_name, bucket_path):
+    def __init__(self, bucket_name, bucket_path, timezones):
         self.bucket_name = bucket_name
         self.bucket_path = bucket_path.rstrip("/")
+        self.timezones = timezones or ["UTC"]
 
     def _get_unique_keys(self, rows):
         columns = set()
         for row in rows:
             columns.update(row.keys())
         return list(sorted(list(columns)))
+
+    def get_filenames_by_dataset_and_version(self):
+        results = {}
+        response = boto3.client("s3").list_objects_v2(
+            Bucket=self.bucket_name, Prefix=self.bucket_path
+        )
+        if "Contents" in response:
+            for obj in response["Contents"]:
+                key = obj["Key"][len(self.bucket_path) + 1 :]
+
+                if len(key.split("/")) == 3:
+                    [dataset_id, version, filename] = key.split("/")
+                    if version.startswith("v"):
+                        version = version[1:]
+                        if filename:
+                            if dataset_id not in results:
+                                results[dataset_id] = {}
+                            if version not in results[dataset_id]:
+                                results[dataset_id][version] = []
+                            results[dataset_id][version].append(filename)
+
+        for dataset_id, subdict in results.items():
+            versions = list(subdict.keys())
+            for version in versions:
+                files = subdict[version]
+                if "meta.json" in files:
+                    subdict[version] = sorted(subdict[version])
+                else:
+                    del subdict[version]
+        return results
 
     def upload_csv(self, dataset_name, dataset_version, data):
         key = (
@@ -50,6 +84,12 @@ class DataBlobClient:
 
     def get_dataset_as_json(self, name, version):
         key = self.bucket_path + "/" + name + "/v" + version + "/data.json"
+        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
+        object_content = response["Body"].read().decode("utf-8")
+        return json.loads(object_content)
+
+    def get_dataset_metadata(self, name: str, version: str):
+        key = self.bucket_path + "/" + name + "/v" + version + "/meta.json"
         response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
         object_content = response["Body"].read().decode("utf-8")
         return json.loads(object_content)
@@ -142,13 +182,19 @@ class DataBlobClient:
         name,
         version,
         data,
+        description=None,
         column_names=None,
         latitude_key=None,
         longitude_key=None,
     ):
+        lastUpdated = dict(
+            [(tz, datetime.now(ZoneInfo(tz)).isoformat()) for tz in self.timezones]
+        )
         columns = column_names if column_names else self._get_unique_keys(data)
         meta = {
             "name": name,
+            "lastUpdated": lastUpdated,
+            "description": description or "",
             "numColumns": len(columns),
             "numRows": len(data),
             "columns": columns,
