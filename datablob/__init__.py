@@ -23,7 +23,7 @@ POSSIBLE_LONGITUDE_KEYS = [
 
 
 class DataBlobClient:
-    def __init__(self, bucket_name, bucket_path, timezones):
+    def __init__(self, bucket_name, bucket_path, timezones=None):
         self.bucket_name = bucket_name
         self.bucket_path = bucket_path.rstrip("/")
         self.timezones = timezones or ["UTC"]
@@ -109,6 +109,26 @@ class DataBlobClient:
             Body=data if isinstance(data, str) else json.dumps(data),
         )
 
+    def upload_jsonl(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.jsonl"
+        )
+
+        results = ""
+        for row in data:
+            results += json.dumps(row) + "\n"
+
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=results,
+        )
+
     def upload_json(self, dataset_name, dataset_version, data):
         key = (
             self.bucket_path
@@ -182,8 +202,8 @@ class DataBlobClient:
         name,
         version,
         data,
-        description=None,
         column_names=None,
+        description=None,
         latitude_key=None,
         longitude_key=None,
     ):
@@ -210,6 +230,7 @@ class DataBlobClient:
 
         self.upload_csv(name, version, data_as_csv)
         self.upload_json(name, version, data)
+        self.upload_jsonl(name, version, data)
         if data_as_geojson_points:
             self.upload_geojson_points(name, version, data_as_geojson_points)
         self.upload_metadata(name, version, meta)
