@@ -1,11 +1,13 @@
 import boto3
 import csv
 from datetime import datetime
-from zoneinfo import ZoneInfo
+import geopandas as gpd
 import io
 import json
+import pandas as pd
+from shapely.geometry import Point
 import tzdata
-
+from zoneinfo import ZoneInfo
 
 POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat"]
 
@@ -144,6 +146,21 @@ class DataBlobClient:
             Body=data if isinstance(data, str) else json.dumps(data),
         )
 
+    def upload_parquet(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.parquet"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=data,
+        )
+
     def upload_metadata(self, dataset_name, dataset_version, data):
         key = (
             self.bucket_path
@@ -221,11 +238,25 @@ class DataBlobClient:
         }
         data_as_csv = self.convert_rows_to_csv(data, fieldnames=columns)
 
+        df = pd.DataFrame(data)
+
         if latitude_key and longitude_key:
             data_as_geojson_points = self.convert_rows_to_geojson_points(
                 data, longitude_key=longitude_key, latitude_key=latitude_key
             )
+            gdf = gpd.GeoDataFrame(
+                df,
+                geometry=gpd.points_from_xy(df[longitude_key], df[latitude_key]),
+                crs="EPSG:4326",
+            )
+
+            buffer = io.BytesIO()
+            gdf.to_parquet(buffer, engine="pyarrow")
+            data_as_parquet_blob = buffer.getvalue()
         else:
+            buffer = io.BytesIO()
+            df.to_parquet(buffer, engine="pyarrow")
+            data_as_parquet_blob = buffer.getvalue()
             data_as_geojson_points = None
 
         self.upload_csv(name, version, data_as_csv)
@@ -233,4 +264,5 @@ class DataBlobClient:
         self.upload_jsonl(name, version, data)
         if data_as_geojson_points:
             self.upload_geojson_points(name, version, data_as_geojson_points)
+        self.upload_parquet(name, version, data_as_parquet_blob)
         self.upload_metadata(name, version, meta)
