@@ -20,6 +20,7 @@ pip install datablob
 - [geojson points](https://geojson.org/)
 - json
 - [json lines](https://jsonlines.org/)
+- [parquet](https://parquet.apache.org/), including [geoparquet](https://geoparquet.org/)
 - xlsx (Microsoft Excel)
 
 ## basic usage
@@ -34,6 +35,7 @@ client.update_dataset(name="fleet", version="2", data=rows, xlsx=True)
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.csv
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.json
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.jsonl
+# s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.parquet
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.xlsx
 ```
 
