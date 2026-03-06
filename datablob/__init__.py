@@ -4,6 +4,7 @@ from datetime import datetime
 import geopandas as gpd
 import io
 import json
+from openpyxl import Workbook
 import pandas as pd
 from shapely.geometry import Point
 import tzdata
@@ -161,6 +162,21 @@ class DataBlobClient:
             Body=data,
         )
 
+    def upload_xlsx(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.xlsx"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=data,
+        )
+
     def upload_metadata(self, dataset_name, dataset_version, data):
         key = (
             self.bucket_path
@@ -175,6 +191,36 @@ class DataBlobClient:
             Key=key,
             Body=data if isinstance(data, str) else json.dumps(data),
         )
+
+    def convert_to_xlsx(self, meta, data, columns):
+        wb = Workbook()
+        ws_overview = wb.active
+        ws_overview.title = "Overview"
+        ws_overview.append(["name", meta["name"]])
+        for tz, value in meta["lastUpdated"].items():
+            ws_overview.append(["last updated (in " + tz + ")", value])
+        ws_overview.append(["description", meta["description"]])
+        ws_overview.append(["number of columns", meta["numColumns"]])
+        ws_overview.append(["number of rows", meta["numRows"]])
+        ws_overview.append(["column names", ", ".join(meta["columns"])])
+
+        # Iterate through all cells in the first column (Column A)
+        max_length = 0
+        for cell in ws_overview["A"]:
+            if cell.value:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+        ws_overview.column_dimensions["A"].width = max_length + 2
+
+        ws_data = wb.create_sheet(title="Data")
+        ws_data.append(columns)
+        for row in data:
+            row = [str(row.get(col, "")) for col in columns]
+            ws_data.append(row)
+        xlsx_buffer = io.BytesIO()
+        wb.save(xlsx_buffer)
+        xlsx_buffer.seek(0)
+        return xlsx_buffer
 
     def convert_rows_to_csv(self, rows, fieldnames=None):
         f = io.StringIO()
@@ -223,6 +269,7 @@ class DataBlobClient:
         description=None,
         latitude_key=None,
         longitude_key=None,
+        xlsx=False,
     ):
         lastUpdated = dict(
             [(tz, datetime.now(ZoneInfo(tz)).isoformat()) for tz in self.timezones]
@@ -258,6 +305,10 @@ class DataBlobClient:
             df.to_parquet(buffer, engine="pyarrow")
             data_as_parquet_blob = buffer.getvalue()
             data_as_geojson_points = None
+
+        if xlsx:
+            data_as_xlsx = self.convert_to_xlsx(meta, data, columns)
+            self.upload_xlsx(name, version, data_as_xlsx)
 
         self.upload_csv(name, version, data_as_csv)
         self.upload_json(name, version, data)
