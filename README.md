@@ -17,10 +17,11 @@ pip install datablob
 
 ## supported formats
 - csv
-- [geojson points](https://geojson.org/)
+- [geojson (points only)](https://geojson.org/)
 - json
 - [json lines](https://jsonlines.org/)
 - [parquet](https://parquet.apache.org/), including [geoparquet](https://geoparquet.org/)
+- [shapefile (points only)](https://en.wikipedia.org/wiki/Shapefile)
 - xlsx (Microsoft Excel)
 
 ## basic usage
@@ -33,9 +34,11 @@ client.update_dataset(name="fleet", version="2", data=rows, xlsx=True)
 # automatically creates the following files
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/meta.json
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.csv
+# s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.points.geojson
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.json
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.jsonl
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.parquet
+# s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.points.shp.zip
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.xlsx
 ```
 

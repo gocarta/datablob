@@ -5,9 +5,11 @@ import geopandas as gpd
 import io
 import json
 from openpyxl import Workbook
+import os
 import pandas as pd
-from shapely.geometry import Point
+import tempfile
 import tzdata
+import zipfile
 from zoneinfo import ZoneInfo
 
 POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat"]
@@ -112,6 +114,21 @@ class DataBlobClient:
             Body=data if isinstance(data, str) else json.dumps(data),
         )
 
+    def upload_shapefile_points(self, dataset_name, dataset_version, blob):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.points.shp.zip"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=blob,
+        )
+
     def upload_jsonl(self, dataset_name, dataset_version, data):
         key = (
             self.bucket_path
@@ -191,6 +208,21 @@ class DataBlobClient:
             Key=key,
             Body=data if isinstance(data, str) else json.dumps(data),
         )
+
+    def convert_gdf_to_shapefile(self, gdf):
+        buf = io.BytesIO()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, f"data.shp")
+            gdf.to_file(path, driver="ESRI Shapefile")
+
+            # copy temp files into in-memory zip file
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for filename in os.listdir(tmpdir):
+                    zf.write(os.path.join(tmpdir, filename), filename)
+
+        buf.seek(0)
+        return buf.getvalue()
 
     def convert_to_xlsx(self, meta, data, columns):
         wb = Workbook()
@@ -300,11 +332,14 @@ class DataBlobClient:
             buffer = io.BytesIO()
             gdf.to_parquet(buffer, engine="pyarrow")
             data_as_parquet_blob = buffer.getvalue()
+
+            shapefile_blob = self.convert_gdf_to_shapefile(gdf)
         else:
             buffer = io.BytesIO()
             df.to_parquet(buffer, engine="pyarrow")
             data_as_parquet_blob = buffer.getvalue()
             data_as_geojson_points = None
+            shapefile_blob = None
 
         if xlsx:
             data_as_xlsx = self.convert_to_xlsx(meta, data, columns)
@@ -315,5 +350,7 @@ class DataBlobClient:
         self.upload_jsonl(name, version, data)
         if data_as_geojson_points:
             self.upload_geojson_points(name, version, data_as_geojson_points)
+        if shapefile_blob:
+            self.upload_shapefile_points(name, version, shapefile_blob)
         self.upload_parquet(name, version, data_as_parquet_blob)
         self.upload_metadata(name, version, meta)
