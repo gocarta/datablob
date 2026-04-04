@@ -3,7 +3,8 @@ import csv
 from datetime import datetime
 import geopandas as gpd
 import io
-import json
+from json import dumps as json_dumps
+from json import loads as json_loads
 from openpyxl import Workbook
 import os
 import pandas as pd
@@ -91,13 +92,13 @@ class DataBlobClient:
         key = self.bucket_path + "/" + name + "/v" + version + "/data.json"
         response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
         object_content = response["Body"].read().decode("utf-8")
-        return json.loads(object_content)
+        return json_loads(object_content)
 
     def get_dataset_metadata(self, name: str, version: str):
         key = self.bucket_path + "/" + name + "/v" + version + "/meta.json"
         response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
         object_content = response["Body"].read().decode("utf-8")
-        return json.loads(object_content)
+        return json_loads(object_content)
 
     def upload_geojson_points(self, dataset_name, dataset_version, data):
         key = (
@@ -111,7 +112,7 @@ class DataBlobClient:
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=data if isinstance(data, str) else json.dumps(data),
+            Body=data if isinstance(data, str) else json_dumps(data),
         )
 
     def upload_shapefile_points(self, dataset_name, dataset_version, blob):
@@ -141,7 +142,7 @@ class DataBlobClient:
 
         results = ""
         for row in data:
-            results += json.dumps(row) + "\n"
+            results += json_dumps(row) + "\n"
 
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
@@ -161,7 +162,7 @@ class DataBlobClient:
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=data if isinstance(data, str) else json.dumps(data),
+            Body=data if isinstance(data, str) else json_dumps(data),
         )
 
     def upload_parquet(self, dataset_name, dataset_version, data):
@@ -206,7 +207,7 @@ class DataBlobClient:
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=data if isinstance(data, str) else json.dumps(data),
+            Body=data if isinstance(data, str) else json_dumps(data),
         )
 
     def convert_gdf_to_shapefile(self, gdf):
@@ -301,6 +302,10 @@ class DataBlobClient:
         description=None,
         latitude_key=None,
         longitude_key=None,
+        json=True,
+        jsonl=True,
+        geojson=True,
+        parquet=True,
         xlsx=False,
     ):
         lastUpdated = dict(
@@ -314,43 +319,75 @@ class DataBlobClient:
             "numColumns": len(columns),
             "numRows": len(data),
             "columns": columns,
+            "files": [],
         }
         data_as_csv = self.convert_rows_to_csv(data, fieldnames=columns)
 
         df = pd.DataFrame(data)
 
         if latitude_key and longitude_key:
-            data_as_geojson_points = self.convert_rows_to_geojson_points(
-                data, longitude_key=longitude_key, latitude_key=latitude_key
-            )
-            gdf = gpd.GeoDataFrame(
-                df,
-                geometry=gpd.points_from_xy(df[longitude_key], df[latitude_key]),
-                crs="EPSG:4326",
-            )
+            if geojson:
+                data_as_geojson_points = self.convert_rows_to_geojson_points(
+                    data, longitude_key=longitude_key, latitude_key=latitude_key
+                )
+            else:
+                data_as_geojson_points = None
 
-            buffer = io.BytesIO()
-            gdf.to_parquet(buffer, engine="pyarrow")
-            data_as_parquet_blob = buffer.getvalue()
+            if parquet:
+                gdf = gpd.GeoDataFrame(
+                    df,
+                    geometry=gpd.points_from_xy(df[longitude_key], df[latitude_key]),
+                    crs="EPSG:4326",
+                )
+
+                buffer = io.BytesIO()
+                gdf.to_parquet(buffer, engine="pyarrow")
+                data_as_parquet_blob = buffer.getvalue()
+            else:
+                data_as_parquet_blob = None
 
             shapefile_blob = self.convert_gdf_to_shapefile(gdf)
         else:
-            buffer = io.BytesIO()
-            df.to_parquet(buffer, engine="pyarrow")
-            data_as_parquet_blob = buffer.getvalue()
+            if parquet:
+                buffer = io.BytesIO()
+                df.to_parquet(buffer, engine="pyarrow")
+                data_as_parquet_blob = buffer.getvalue()
+            else:
+                data_as_parquet_blob = None
+
             data_as_geojson_points = None
             shapefile_blob = None
 
         if xlsx:
             data_as_xlsx = self.convert_to_xlsx(meta, data, columns)
             self.upload_xlsx(name, version, data_as_xlsx)
+            meta["files"].append({"filename": "data.xlsx", "format": "Excel"})
 
         self.upload_csv(name, version, data_as_csv)
-        self.upload_json(name, version, data)
-        self.upload_jsonl(name, version, data)
-        if data_as_geojson_points:
+        meta["files"].append({"filename": "data.csv", "format": "CSV"})
+
+        if json:
+            self.upload_json(name, version, data)
+            meta["files"].append({"filename": "data.json", "format": "JSON"})
+
+        if jsonl:
+            self.upload_jsonl(name, version, data)
+            meta["files"].append({"filename": "data.jsonl", "format": "JSON Lines"})
+
+        if geojson and data_as_geojson_points:
             self.upload_geojson_points(name, version, data_as_geojson_points)
+            meta["files"].append(
+                {"filename": "data.points.geojson", "format": "GeoJSON (Points)"}
+            )
+
         if shapefile_blob:
             self.upload_shapefile_points(name, version, shapefile_blob)
-        self.upload_parquet(name, version, data_as_parquet_blob)
+            meta["files"].append(
+                {"filename": "data.points.shp.zip", "format": "Shapefile (Points)"}
+            )
+
+        if parquet and data_as_parquet_blob:
+            self.upload_parquet(name, version, data_as_parquet_blob)
+            meta["files"].append({"filename": "data.parquet", "format": "Parquet"})
+
         self.upload_metadata(name, version, meta)
