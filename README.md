@@ -22,6 +22,7 @@ pip install datablob
 - [json lines](https://jsonlines.org/)
 - [parquet](https://parquet.apache.org/), including [geoparquet](https://geoparquet.org/)
 - [shapefile (points only)](https://en.wikipedia.org/wiki/Shapefile)
+- tsv
 - xlsx (Microsoft Excel)
 
 ## basic usage
@@ -39,6 +40,7 @@ client.update_dataset(name="fleet", version="2", data=rows, xlsx=True)
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.jsonl
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.parquet
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.points.shp.zip
+# s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.tsv
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.xlsx
 ```
 

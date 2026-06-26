@@ -13,7 +13,15 @@ import tzdata
 import zipfile
 from zoneinfo import ZoneInfo
 
-POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat", "@lat"]
+POSSIBLE_LATITUDE_KEYS = [
+    "LATITUDE",
+    "Latitude",
+    "latitude",
+    "LAT",
+    "Lat",
+    "lat",
+    "@lat",
+]
 
 POSSIBLE_LONGITUDE_KEYS = [
     "LONGITUDE",
@@ -25,7 +33,7 @@ POSSIBLE_LONGITUDE_KEYS = [
     "LON",
     "Lon",
     "lon",
-    "@lon"
+    "@lon",
 ]
 
 
@@ -81,8 +89,26 @@ class DataBlobClient:
             Body=data,
         )
 
+    def upload_tsv(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path + "/" + dataset_name + "/v" + dataset_version + "/data.tsv"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=data,
+        )
+
     def get_dataset_as_csv(self, name, version, remove_bom=True):
         key = self.bucket_path + "/" + name + "/v" + version + "/data.csv"
+        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
+        object_content = response["Body"].read().decode("utf-8")
+        if remove_bom:
+            object_content = object_content.lstrip("\ufeff")
+        return object_content
+
+    def get_dataset_as_tsv(self, name, version, remove_bom=True):
+        key = self.bucket_path + "/" + name + "/v" + version + "/data.tsv"
         response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
         object_content = response["Body"].read().decode("utf-8")
         if remove_bom:
@@ -267,6 +293,17 @@ class DataBlobClient:
         # read and make sure we don't have a BOM
         return f.read().lstrip("\ufeff")
 
+    def convert_rows_to_tsv(self, rows, fieldnames=None):
+        f = io.StringIO()
+        if fieldnames is None:
+            fieldnames = sorted(list(rows[0].keys()))
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows)
+        f.seek(0)
+        # read and make sure we don't have a BOM
+        return f.read().lstrip("\ufeff")
+
     def infer_latitude(self, rows):
         keys = POSSIBLE_LATITUDE_KEYS
         for row in rows:
@@ -323,6 +360,7 @@ class DataBlobClient:
             "files": [],
         }
         data_as_csv = self.convert_rows_to_csv(data, fieldnames=columns)
+        data_as_tsv = self.convert_rows_to_tsv(data, fieldnames=columns)
 
         df = pd.DataFrame(data)
 
@@ -366,6 +404,9 @@ class DataBlobClient:
 
         self.upload_csv(name, version, data_as_csv)
         meta["files"].append({"filename": "data.csv", "format": "CSV"})
+
+        self.upload_tsv(name, version, data_as_tsv)
+        meta["files"].append({"filename": "data.tsv", "format": "TSV"})
 
         if json:
             self.upload_json(name, version, data)
