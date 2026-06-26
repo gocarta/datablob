@@ -13,7 +13,7 @@ import tzdata
 import zipfile
 from zoneinfo import ZoneInfo
 
-POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat"]
+POSSIBLE_LATITUDE_KEYS = ["LATITUDE", "Latitude", "latitude", "LAT", "Lat", "lat", "@lat"]
 
 POSSIBLE_LONGITUDE_KEYS = [
     "LONGITUDE",
@@ -25,6 +25,7 @@ POSSIBLE_LONGITUDE_KEYS = [
     "LON",
     "Lon",
     "lon",
+    "@lon"
 ]
 
 
