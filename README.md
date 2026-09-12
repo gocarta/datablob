@@ -29,7 +29,9 @@ pip install datablob
 ```py
 from datablob import DataBlobClient
 
-client = DataBlobClient(bucket_name="example-test-bucket-123", bucket_path="prefix/to/dataportal")
+client = DataBlobClient(
+    bucket_name="example-test-bucket-123", bucket_path="prefix/to/dataportal"
+)
 
 client.update_dataset(name="fleet", version="2", data=rows, xlsx=True)
 # automatically creates the following files
@@ -42,6 +44,19 @@ client.update_dataset(name="fleet", version="2", data=rows, xlsx=True)
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.points.shp.zip
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.tsv
 # s3://example-test-bucket-123/prefix/to/dataportal/fleet/v2/data.xlsx
+```
+
+## advanced usage
+```py
+client.update_dataset(
+    name="fleet",
+    version="1",
+    data=rows,
+    column_names=["ID", "Make", "Model", "Year"]
+    description="List of Vehicles in Fleet",
+    xlsx=True,
+    xlsx_data_types=["Number", "Text", "Text", "Number"]
+)
 ```
 
 ## examples
