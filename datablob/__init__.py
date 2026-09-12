@@ -252,7 +252,24 @@ class DataBlobClient:
         buf.seek(0)
         return buf.getvalue()
 
-    def convert_to_xlsx(self, meta, data, columns):
+    def _convert_row_to_xlsx_data_types(self, row, xlsx_data_types):
+        result = []
+        for icol, value in enumerate(row):
+            data_type = xlsx_data_types[icol]
+            if value is None:
+                value = ""
+            elif data_type == "Number":
+                if value != "":
+                    value = float(value)
+            elif data_type == "Text":
+                value = str(value)
+            else:
+                print("[datablob] warning: unsupported xlsx data type " + data_type)
+                value = str(value)
+            result.append(value)
+        return result
+
+    def convert_to_xlsx(self, meta, data, columns, xlsx_data_types=None):
         wb = Workbook()
         ws_overview = wb.active
         ws_overview.title = "Overview"
@@ -263,6 +280,8 @@ class DataBlobClient:
         ws_overview.append(["number of columns", meta["numColumns"]])
         ws_overview.append(["number of rows", meta["numRows"]])
         ws_overview.append(["column names", ", ".join(meta["columns"])])
+        if "xlsx_data_types" in meta:
+            ws_overview.append(["xlsx data types", ", ".join(meta["xlsx_data_types"])])
 
         # Iterate through all cells in the first column (Column A)
         max_length = 0
@@ -276,6 +295,8 @@ class DataBlobClient:
         ws_data.append(columns)
         for row in data:
             row = [str(row.get(col, "")) for col in columns]
+            if xlsx_data_types:
+                row = self._convert_row_to_xlsx_data_types(row, xlsx_data_types)
             ws_data.append(row)
         xlsx_buffer = io.BytesIO()
         wb.save(xlsx_buffer)
@@ -283,7 +304,7 @@ class DataBlobClient:
         return xlsx_buffer
 
     def convert_rows_to_csv(self, rows, fieldnames=None):
-        f = io.StringIO()
+        f = io.StringIO(newline="")
         if fieldnames is None:
             fieldnames = sorted(list(rows[0].keys()))
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -294,7 +315,7 @@ class DataBlobClient:
         return f.read().lstrip("\ufeff")
 
     def convert_rows_to_tsv(self, rows, fieldnames=None):
-        f = io.StringIO()
+        f = io.StringIO(newline="")
         if fieldnames is None:
             fieldnames = sorted(list(rows[0].keys()))
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
@@ -345,6 +366,7 @@ class DataBlobClient:
         geojson=True,
         parquet=True,
         xlsx=False,
+        xlsx_data_types=None,
     ):
         lastUpdated = dict(
             [(tz, datetime.now(ZoneInfo(tz)).isoformat()) for tz in self.timezones]
@@ -398,7 +420,9 @@ class DataBlobClient:
             shapefile_blob = None
 
         if xlsx:
-            data_as_xlsx = self.convert_to_xlsx(meta, data, columns)
+            if xlsx_data_types:
+                meta["xlsx_data_types"] = xlsx_data_types
+            data_as_xlsx = self.convert_to_xlsx(meta, data, columns, xlsx_data_types)
             self.upload_xlsx(name, version, data_as_xlsx)
             meta["files"].append({"filename": "data.xlsx", "format": "Excel"})
 
