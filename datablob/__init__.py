@@ -11,7 +11,6 @@ import pandas as pd
 from shapely.geometry import shape
 import tempfile
 import tzdata
-from typing import Optional
 import zipfile
 from zoneinfo import ZoneInfo
 
@@ -417,17 +416,17 @@ class DataBlobClient:
         name: str,
         version: str,
         data: list[dict],
-        column_names: Optional[list[str]] = None,
-        description: Optional[str] = None,
-        polygon_key: Optional[str] = None,
-        latitude_key: Optional[str] = None,
-        longitude_key: Optional[str] = None,
+        column_names: list[str] | None = None,
+        description: str | None = None,
+        polygon_key: str | None = None,
+        latitude_key: str | None = None,
+        longitude_key: str | None = None,
         json: bool = True,
         jsonl: bool = True,
         geojson: bool = True,
         parquet: bool = True,
         xlsx: bool = False,
-        xlsx_data_types: Optional[list[str]] = None,
+        xlsx_data_types: list[str] | None = None,
     ):
         lastUpdated = dict(
             [(tz, datetime.now(ZoneInfo(tz)).isoformat()) for tz in self.timezones]

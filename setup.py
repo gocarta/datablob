@@ -15,7 +15,7 @@ setup(
             "__init__.py",
         ]
     },
-    version="0.9.1",
+    version="0.9.2",
     description="Client for Updating a Simple Data Warehouse on Blob Storage",
     long_description=long_description,
     long_description_content_type="text/markdown",
