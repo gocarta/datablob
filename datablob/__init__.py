@@ -8,6 +8,7 @@ from json import loads as json_loads
 from openpyxl import Workbook
 import os
 import pandas as pd
+from shapely.geometry import shape
 import tempfile
 import tzdata
 import zipfile
@@ -48,6 +49,18 @@ class DataBlobClient:
         for row in rows:
             columns.update(row.keys())
         return list(sorted(list(columns)))
+
+    def _flatten_rows(self, rows):
+        flat_rows = []
+        for row in rows:
+            flat_row = {}
+            for key, value in row.items():
+                if isinstance(value, dict):
+                    flat_row[key] = json_dumps(value)
+                else:
+                    flat_row[key] = value
+            flat_rows.append(flat_row)
+        return flat_rows
 
     def get_filenames_by_dataset_and_version(self):
         results = {}
@@ -142,6 +155,21 @@ class DataBlobClient:
             Body=data if isinstance(data, str) else json_dumps(data),
         )
 
+    def upload_geojson_polygons(self, dataset_name, dataset_version, data):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.polygons.geojson"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=data if isinstance(data, str) else json_dumps(data),
+        )
+
     def upload_shapefile_points(self, dataset_name, dataset_version, blob):
         key = (
             self.bucket_path
@@ -150,6 +178,21 @@ class DataBlobClient:
             + "/v"
             + dataset_version
             + "/data.points.shp.zip"
+        )
+        boto3.client("s3").put_object(
+            Bucket=self.bucket_name,
+            Key=key,
+            Body=blob,
+        )
+
+    def upload_shapefile_polygons(self, dataset_name, dataset_version, blob):
+        key = (
+            self.bucket_path
+            + "/"
+            + dataset_name
+            + "/v"
+            + dataset_version
+            + "/data.polygons.shp.zip"
         )
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
@@ -234,7 +277,7 @@ class DataBlobClient:
         boto3.client("s3").put_object(
             Bucket=self.bucket_name,
             Key=key,
-            Body=data if isinstance(data, str) else json_dumps(data),
+            Body=data if isinstance(data, str) else json_dumps(data, indent=4),
         )
 
     def convert_gdf_to_shapefile(self, gdf):
@@ -352,21 +395,38 @@ class DataBlobClient:
             )
         return {"type": "FeatureCollection", "features": features}
 
+    def convert_rows_to_geojson_polygons(self, rows, polygon_key):
+        features = []
+        for row in rows:
+            geometry = row[polygon_key]
+            if isinstance(geometry, str):
+                geometry = json_loads(geometry)
+            if geometry["type"] in ["Polygon", "MultiPolygon"]:
+                features.append(
+                    {
+                        "type": "Feature",
+                        "properties": row,
+                        "geometry": geometry,
+                    }
+                )
+        return {"type": "FeatureCollection", "features": features}
+
     def update_dataset(
         self,
-        name,
-        version,
-        data,
-        column_names=None,
-        description=None,
-        latitude_key=None,
-        longitude_key=None,
-        json=True,
-        jsonl=True,
-        geojson=True,
-        parquet=True,
-        xlsx=False,
-        xlsx_data_types=None,
+        name: str,
+        version: str,
+        data: list[dict],
+        column_names: Optional[list[str]] = None,
+        description: Optional[str] = None,
+        polygon_key: Optional[str] = None,
+        latitude_key: Optional[str] = None,
+        longitude_key: Optional[str] = None,
+        json: bool = True,
+        jsonl: bool = True,
+        geojson: bool = True,
+        parquet: bool = True,
+        xlsx: bool = False,
+        xlsx_data_types: Optional[list[str]] = None,
     ):
         lastUpdated = dict(
             [(tz, datetime.now(ZoneInfo(tz)).isoformat()) for tz in self.timezones]
@@ -381,18 +441,24 @@ class DataBlobClient:
             "columns": columns,
             "files": [],
         }
-        data_as_csv = self.convert_rows_to_csv(data, fieldnames=columns)
-        data_as_tsv = self.convert_rows_to_tsv(data, fieldnames=columns)
+
+        flat_rows = self._flatten_rows(data)
+
+        data_as_csv = self.convert_rows_to_csv(flat_rows, fieldnames=columns)
+        data_as_tsv = self.convert_rows_to_tsv(flat_rows, fieldnames=columns)
 
         df = pd.DataFrame(data)
+
+        data_as_geojson_points = None
+        data_as_geojson_polygons = None
+        shapefile_points_blob = None
+        shapefile_polygons_blob = None
 
         if latitude_key and longitude_key:
             if geojson:
                 data_as_geojson_points = self.convert_rows_to_geojson_points(
                     data, longitude_key=longitude_key, latitude_key=latitude_key
                 )
-            else:
-                data_as_geojson_points = None
 
             if parquet:
                 gdf = gpd.GeoDataFrame(
@@ -400,6 +466,33 @@ class DataBlobClient:
                     geometry=gpd.points_from_xy(df[longitude_key], df[latitude_key]),
                     crs="EPSG:4326",
                 )
+                # drops polygonal column that we don't use in shapefile output
+                if polygon_key:
+                    gdf.drop(columns=[polygon_key], inplace=True)
+                buffer = io.BytesIO()
+                gdf.to_parquet(buffer, engine="pyarrow")
+
+                data_as_parquet_blob = buffer.getvalue()
+            else:
+                data_as_parquet_blob = None
+
+            shapefile_points_blob = self.convert_gdf_to_shapefile(gdf)
+
+        if polygon_key:
+            if geojson:
+                data_as_geojson_polygons = self.convert_rows_to_geojson_polygons(
+                    data, polygon_key=polygon_key
+                )
+
+            if parquet:
+                gdf = gpd.GeoDataFrame(
+                    df,
+                    geometry=df[polygon_key].apply(shape),
+                    crs="EPSG:4326",
+                )
+
+                # can drop old polygon column, since we replaced with a geometry column
+                gdf.drop(columns=[polygon_key], inplace=True)
 
                 buffer = io.BytesIO()
                 gdf.to_parquet(buffer, engine="pyarrow")
@@ -407,8 +500,9 @@ class DataBlobClient:
             else:
                 data_as_parquet_blob = None
 
-            shapefile_blob = self.convert_gdf_to_shapefile(gdf)
-        else:
+            shapefile_polygons_blob = self.convert_gdf_to_shapefile(gdf)
+
+        if not ((latitude_key and longitude_key) or polygon_key):
             if parquet:
                 buffer = io.BytesIO()
                 df.to_parquet(buffer, engine="pyarrow")
@@ -416,13 +510,12 @@ class DataBlobClient:
             else:
                 data_as_parquet_blob = None
 
-            data_as_geojson_points = None
-            shapefile_blob = None
-
         if xlsx:
             if xlsx_data_types:
                 meta["xlsx_data_types"] = xlsx_data_types
-            data_as_xlsx = self.convert_to_xlsx(meta, data, columns, xlsx_data_types)
+            data_as_xlsx = self.convert_to_xlsx(
+                meta, flat_rows, columns, xlsx_data_types
+            )
             self.upload_xlsx(name, version, data_as_xlsx)
             meta["files"].append({"filename": "data.xlsx", "format": "Excel"})
 
@@ -446,10 +539,22 @@ class DataBlobClient:
                 {"filename": "data.points.geojson", "format": "GeoJSON (Points)"}
             )
 
-        if shapefile_blob:
-            self.upload_shapefile_points(name, version, shapefile_blob)
+        if geojson and data_as_geojson_polygons:
+            self.upload_geojson_polygons(name, version, data_as_geojson_polygons)
+            meta["files"].append(
+                {"filename": "data.polygons.geojson", "format": "GeoJSON (Polygons)"}
+            )
+
+        if shapefile_points_blob:
+            self.upload_shapefile_points(name, version, shapefile_points_blob)
             meta["files"].append(
                 {"filename": "data.points.shp.zip", "format": "Shapefile (Points)"}
+            )
+
+        if shapefile_polygons_blob:
+            self.upload_shapefile_polygons(name, version, shapefile_polygons_blob)
+            meta["files"].append(
+                {"filename": "data.polygons.shp.zip", "format": "Shapefile (Polygons)"}
             )
 
         if parquet and data_as_parquet_blob:
