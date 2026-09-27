@@ -11,6 +11,7 @@ import pandas as pd
 from shapely.geometry import shape
 import tempfile
 import tzdata
+from typing import Optional
 import zipfile
 from zoneinfo import ZoneInfo
 
