@@ -39,4 +39,9 @@ setup(
         "shapely",
         "tzdata",
     ],
+    extras_require={
+        "gcs": [
+            "google-cloud-storage",
+        ],
+    },
 )
