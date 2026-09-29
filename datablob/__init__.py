@@ -1,4 +1,3 @@
-import boto3
 import csv
 from datetime import datetime
 import geopandas as gpd
@@ -10,9 +9,14 @@ import os
 import pandas as pd
 from shapely.geometry import shape
 import tempfile
-import tzdata
 import zipfile
 from zoneinfo import ZoneInfo
+
+from datablob.storage_client import (
+    GcsClient as GcsClient,
+    S3Client,
+    StorageClientProtocol,
+)
 
 POSSIBLE_LATITUDE_KEYS = [
     "LATITUDE",
@@ -39,10 +43,38 @@ POSSIBLE_LONGITUDE_KEYS = [
 
 
 class DataBlobClient:
-    def __init__(self, bucket_name, bucket_path, timezones=None):
+    storage_client: StorageClientProtocol
+
+    def __init__(
+        self,
+        bucket_name,
+        bucket_path,
+        timezones=None,
+        provider="s3",
+        storage_client: StorageClientProtocol | None = None,
+    ):
+        if bucket_name.startswith("gs://"):
+            provider = "gcs"
+            bucket_name = bucket_name[5:]
+        elif bucket_name.startswith("s3://"):
+            provider = "s3"
+            bucket_name = bucket_name[5:]
+
         self.bucket_name = bucket_name
         self.bucket_path = bucket_path.rstrip("/")
         self.timezones = timezones or ["UTC"]
+        self.provider = provider.lower()
+
+        if storage_client is not None:
+            self.storage_client = storage_client
+        elif self.provider == "s3":
+            self.storage_client = S3Client(self.bucket_name)
+        elif self.provider == "gcs":
+            self.storage_client = GcsClient(self.bucket_name)
+        else:
+            raise ValueError(
+                f"Unsupported provider '{self.provider}'. Must be 's3' or 'gcs'."
+            )
 
     def _get_unique_keys(self, rows):
         columns = set()
@@ -64,23 +96,21 @@ class DataBlobClient:
 
     def get_filenames_by_dataset_and_version(self):
         results = {}
-        response = boto3.client("s3").list_objects_v2(
-            Bucket=self.bucket_name, Prefix=self.bucket_path
-        )
-        if "Contents" in response:
-            for obj in response["Contents"]:
-                key = obj["Key"][len(self.bucket_path) + 1 :]
+        keys = self.storage_client.list_keys(prefix=self.bucket_path)
+        prefix_len = len(self.bucket_path) + 1 if self.bucket_path else 0
+        for full_key in keys:
+            key = full_key[prefix_len:] if prefix_len else full_key
 
-                if len(key.split("/")) == 3:
-                    [dataset_id, version, filename] = key.split("/")
-                    if version.startswith("v"):
-                        version = version[1:]
-                        if filename:
-                            if dataset_id not in results:
-                                results[dataset_id] = {}
-                            if version not in results[dataset_id]:
-                                results[dataset_id][version] = []
-                            results[dataset_id][version].append(filename)
+            if len(key.split("/")) == 3:
+                [dataset_id, version, filename] = key.split("/")
+                if version.startswith("v"):
+                    version = version[1:]
+                    if filename:
+                        if dataset_id not in results:
+                            results[dataset_id] = {}
+                        if version not in results[dataset_id]:
+                            results[dataset_id][version] = []
+                        results[dataset_id][version].append(filename)
 
         for dataset_id, subdict in results.items():
             versions = list(subdict.keys())
@@ -96,48 +126,36 @@ class DataBlobClient:
         key = (
             self.bucket_path + "/" + dataset_name + "/v" + dataset_version + "/data.csv"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data,
-        )
+        self.storage_client.put_object(key, data)
 
     def upload_tsv(self, dataset_name, dataset_version, data):
         key = (
             self.bucket_path + "/" + dataset_name + "/v" + dataset_version + "/data.tsv"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data,
-        )
+        self.storage_client.put_object(key, data)
 
     def get_dataset_as_csv(self, name, version, remove_bom=True):
         key = self.bucket_path + "/" + name + "/v" + version + "/data.csv"
-        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
-        object_content = response["Body"].read().decode("utf-8")
+        object_content = self.storage_client.get_object_bytes(key).decode("utf-8")
         if remove_bom:
             object_content = object_content.lstrip("\ufeff")
         return object_content
 
     def get_dataset_as_tsv(self, name, version, remove_bom=True):
         key = self.bucket_path + "/" + name + "/v" + version + "/data.tsv"
-        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
-        object_content = response["Body"].read().decode("utf-8")
+        object_content = self.storage_client.get_object_bytes(key).decode("utf-8")
         if remove_bom:
             object_content = object_content.lstrip("\ufeff")
         return object_content
 
     def get_dataset_as_json(self, name, version):
         key = self.bucket_path + "/" + name + "/v" + version + "/data.json"
-        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
-        object_content = response["Body"].read().decode("utf-8")
+        object_content = self.storage_client.get_object_bytes(key).decode("utf-8")
         return json_loads(object_content)
 
     def get_dataset_metadata(self, name: str, version: str):
         key = self.bucket_path + "/" + name + "/v" + version + "/meta.json"
-        response = boto3.client("s3").get_object(Bucket=self.bucket_name, Key=key)
-        object_content = response["Body"].read().decode("utf-8")
+        object_content = self.storage_client.get_object_bytes(key).decode("utf-8")
         return json_loads(object_content)
 
     def upload_geojson_points(self, dataset_name, dataset_version, data):
@@ -149,10 +167,9 @@ class DataBlobClient:
             + dataset_version
             + "/data.points.geojson"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data if isinstance(data, str) else json_dumps(data),
+        self.storage_client.put_object(
+            key,
+            data if isinstance(data, str) else json_dumps(data),
         )
 
     def upload_geojson_polygons(self, dataset_name, dataset_version, data):
@@ -164,10 +181,9 @@ class DataBlobClient:
             + dataset_version
             + "/data.polygons.geojson"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data if isinstance(data, str) else json_dumps(data),
+        self.storage_client.put_object(
+            key,
+            data if isinstance(data, str) else json_dumps(data),
         )
 
     def upload_shapefile_points(self, dataset_name, dataset_version, blob):
@@ -179,11 +195,7 @@ class DataBlobClient:
             + dataset_version
             + "/data.points.shp.zip"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=blob,
-        )
+        self.storage_client.put_object(key, blob)
 
     def upload_shapefile_polygons(self, dataset_name, dataset_version, blob):
         key = (
@@ -194,11 +206,7 @@ class DataBlobClient:
             + dataset_version
             + "/data.polygons.shp.zip"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=blob,
-        )
+        self.storage_client.put_object(key, blob)
 
     def upload_jsonl(self, dataset_name, dataset_version, data):
         key = (
@@ -214,11 +222,7 @@ class DataBlobClient:
         for row in data:
             results += json_dumps(row) + "\n"
 
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=results,
-        )
+        self.storage_client.put_object(key, results)
 
     def upload_json(self, dataset_name, dataset_version, data):
         key = (
@@ -229,10 +233,9 @@ class DataBlobClient:
             + dataset_version
             + "/data.json"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data if isinstance(data, str) else json_dumps(data),
+        self.storage_client.put_object(
+            key,
+            data if isinstance(data, str) else json_dumps(data),
         )
 
     def upload_parquet(self, dataset_name, dataset_version, data):
@@ -244,11 +247,7 @@ class DataBlobClient:
             + dataset_version
             + "/data.parquet"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data,
-        )
+        self.storage_client.put_object(key, data)
 
     def upload_xlsx(self, dataset_name, dataset_version, data):
         key = (
@@ -259,11 +258,7 @@ class DataBlobClient:
             + dataset_version
             + "/data.xlsx"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data,
-        )
+        self.storage_client.put_object(key, data)
 
     def upload_metadata(self, dataset_name, dataset_version, data):
         key = (
@@ -274,17 +269,16 @@ class DataBlobClient:
             + dataset_version
             + "/meta.json"
         )
-        boto3.client("s3").put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=data if isinstance(data, str) else json_dumps(data, indent=4),
+        self.storage_client.put_object(
+            key,
+            data if isinstance(data, str) else json_dumps(data, indent=4),
         )
 
     def convert_gdf_to_shapefile(self, gdf):
         buf = io.BytesIO()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, f"data.shp")
+            path = os.path.join(tmpdir, "data.shp")
             gdf.to_file(path, driver="ESRI Shapefile")
 
             # copy temp files into in-memory zip file
