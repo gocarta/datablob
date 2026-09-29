@@ -15,6 +15,11 @@ Client for Updating a Simple Data Warehouse on Blob Storage
 pip install datablob
 ```
 
+To include Google Cloud Storage (GCS) support:
+```sh
+pip install datablob[gcs]
+```
+
 ## supported formats
 - csv
 - [geojson (points and polygons)](https://geojson.org/)
@@ -29,8 +34,18 @@ pip install datablob
 ```py
 from datablob import DataBlobClient
 
+# AWS S3 (default)
 client = DataBlobClient(
     bucket_name="example-test-bucket-123", bucket_path="prefix/to/dataportal"
+)
+
+# Google Cloud Storage (GCS)
+client = DataBlobClient(
+    bucket_name="example-gcs-bucket-123", bucket_path="prefix/to/dataportal", provider="gcs"
+)
+# or using gs:// prefix:
+client = DataBlobClient(
+    bucket_name="gs://example-gcs-bucket-123", bucket_path="prefix/to/dataportal"
 )
 
 rows = [
@@ -47,7 +62,7 @@ client.update_dataset(
     version="2", # version of the dataset. It's a string, so you can version as you like.
     data=rows, # list of dictionaries.  Each row is a dictionary.
     latitude_key="@lat", # name of the latitude column 
-    longitude="@lon", # name of the longitude column
+    longitude_key="@lon", # name of the longitude column
     polygon_key="@geom", # name of the column with a polygon geometry in it (if applicable)
     xlsx=True # set to True to include an Excel file in output
 )
