@@ -467,7 +467,7 @@ class DataBlobClient:
                     crs="EPSG:4326",
                 )
                 # drops polygonal column that we don't use in shapefile output
-                if polygon_key:
+                if polygon_key and polygon_key != "geometry":
                     gdf.drop(columns=[polygon_key], inplace=True)
                 buffer = io.BytesIO()
                 gdf.to_parquet(buffer, engine="pyarrow")
@@ -491,8 +491,9 @@ class DataBlobClient:
                     crs="EPSG:4326",
                 )
 
-                # can drop old polygon column, since we replaced with a geometry column
-                gdf.drop(columns=[polygon_key], inplace=True)
+                if polygon_key != "geometry":
+                    # can drop old polygon column, since we replaced with a geometry column
+                    gdf.drop(columns=[polygon_key], inplace=True)
 
                 buffer = io.BytesIO()
                 gdf.to_parquet(buffer, engine="pyarrow")
