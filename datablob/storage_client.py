@@ -1,10 +1,13 @@
 import io
-from typing import Protocol, Union
+from typing import Protocol
+
 import boto3
+
+BlobBody = str | bytes | io.BytesIO | io.StringIO
 
 
 class StorageClientProtocol(Protocol):
-    def put_object(self, key: str, body: Union[str, bytes, io.BytesIO]) -> None: ...
+    def put_object(self, key: str, body: BlobBody) -> None: ...
 
     def get_object_bytes(self, key: str) -> bytes: ...
 
@@ -16,7 +19,7 @@ class S3Client:
         self.bucket_name = bucket_name
         self.client = boto3.client("s3")
 
-    def put_object(self, key: str, body: Union[str, bytes, io.BytesIO]) -> None:
+    def put_object(self, key: str, body: BlobBody) -> None:
         if isinstance(body, (io.BytesIO, io.StringIO)):
             data = body.getvalue()
         else:
@@ -52,7 +55,7 @@ class GcsClient:
             )
         self.client = storage.Client()
 
-    def put_object(self, key: str, body: Union[str, bytes, io.BytesIO]) -> None:
+    def put_object(self, key: str, body: BlobBody) -> None:
         bucket = self.client.bucket(self.bucket_name)
         blob = bucket.blob(key)
         if isinstance(body, (io.BytesIO, io.StringIO)):
