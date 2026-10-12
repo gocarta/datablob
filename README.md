@@ -43,10 +43,6 @@ client = DataBlobClient(
 client = DataBlobClient(
     bucket_name="example-gcs-bucket-123", bucket_path="prefix/to/dataportal", provider="gcs"
 )
-# or using gs:// prefix:
-client = DataBlobClient(
-    bucket_name="gs://example-gcs-bucket-123", bucket_path="prefix/to/dataportal"
-)
 
 rows = [
     {

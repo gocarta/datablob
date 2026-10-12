@@ -9,6 +9,7 @@ import os
 import pandas as pd
 from shapely.geometry import shape
 import tempfile
+from typing import Literal, TypeAlias
 import zipfile
 from zoneinfo import ZoneInfo
 
@@ -41,6 +42,9 @@ POSSIBLE_LONGITUDE_KEYS = [
     "@lon",
 ]
 
+Provider: TypeAlias = Literal["s3", "gcs"]
+VALID_PROVIDERS: tuple[Provider, ...] = ("s3", "gcs")
+
 
 class DataBlobClient:
     storage_client: StorageClientProtocol
@@ -50,20 +54,18 @@ class DataBlobClient:
         bucket_name,
         bucket_path,
         timezones=None,
-        provider="s3",
+        provider: Provider = "s3",
         storage_client: StorageClientProtocol | None = None,
     ):
-        if bucket_name.startswith("gs://"):
-            provider = "gcs"
-            bucket_name = bucket_name[5:]
-        elif bucket_name.startswith("s3://"):
-            provider = "s3"
-            bucket_name = bucket_name[5:]
+        if provider not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Unsupported provider '{provider}'. Must be 's3' or 'gcs'."
+            )
 
         self.bucket_name = bucket_name
         self.bucket_path = bucket_path.rstrip("/")
         self.timezones = timezones or ["UTC"]
-        self.provider = provider.lower()
+        self.provider = provider
 
         if storage_client is not None:
             self.storage_client = storage_client
