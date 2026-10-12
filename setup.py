@@ -43,5 +43,8 @@ setup(
         "gcs": [
             "google-cloud-storage",
         ],
+        "dev": [
+            "pytest",
+        ],
     },
 )
